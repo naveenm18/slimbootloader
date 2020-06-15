@@ -518,9 +518,7 @@ FindPartitions (
 {
   EFI_STATUS                   Status;
   DEVICE_BLOCK_INFO            DevBlockInfo;
-  UINT8                       *Buffer;
   LOGICAL_BLOCK_DEVICE        *BlockDev;
-  EFI_PARTITION_TABLE_HEADER  *Gpt;
   PART_BLOCK_DEVICE           *PartBlockDev;
 
   if (PartHandle == NULL) {
@@ -542,7 +540,7 @@ FindPartitions (
 
   CopyMem (&PartBlockDev->BlockInfo, &DevBlockInfo, sizeof (DEVICE_BLOCK_INFO));
 
-  if (DevBlockInfo.BlockSize == 1) {
+  if (MediaGetInterfaceType() == OsBootDeviceMemory) {
     // It is memory mapped SPI block device.
     Status = FindSpiPartitions (PartBlockDev);
     if (!EFI_ERROR (Status)) {
@@ -551,36 +549,18 @@ FindPartitions (
     return Status;
   }
 
-  // Read GPT Partition first
-  Buffer = (UINT8 *) PartBlockDev->BlockData;
-  Status = MediaReadBlocks (HwDevice, 1, DevBlockInfo.BlockSize, Buffer);
-  if (!EFI_ERROR (Status)) {
-    // Check GPT partition
-    Gpt = (EFI_PARTITION_TABLE_HEADER *)Buffer;
-    if ((UINT32)Gpt->Header.Signature == 0x20494645) {
-      Status = FindGptPartitions (PartBlockDev);
-    } else {
-      Status = FindMbrPartitions (PartBlockDev);
-    }
+  // Could not find any partition, so assume no partitions
+  BlockDev              = & (PartBlockDev->BlockDevice[0]);
+  BlockDev->StartBlock  = 0;
+  BlockDev->LastBlock   = DevBlockInfo.BlockNum - 1;
+  PartBlockDev->PartitionType    = EnumPartTypeUnknown;
+  PartBlockDev->PartitionChecked = TRUE;
+  PartBlockDev->BlockDeviceCount = 1;
+  Status = EFI_SUCCESS;
 
-    // Check result
-    if (EFI_ERROR (Status)) {
-      // Could not find any partition, so assume no partitions
-      BlockDev              = & (PartBlockDev->BlockDevice[0]);
-      BlockDev->StartBlock  = 0;
-      BlockDev->LastBlock   = DevBlockInfo.BlockNum - 1;
-      PartBlockDev->PartitionType    = EnumPartTypeUnknown;
-      PartBlockDev->PartitionChecked = TRUE;
-      PartBlockDev->BlockDeviceCount = 1;
-      Status = EFI_SUCCESS;
-    }
-
-    DEBUG ((DEBUG_INFO, "Partition type: %a  (%d logical partitions)\n", \
-            GetPartitionTypeName (PartBlockDev->PartitionType), \
-            PartBlockDev->BlockDeviceCount));
-  } else {
-    Status = EFI_DEVICE_ERROR;
-  }
+  DEBUG ((DEBUG_INFO, "Partition type: %a  (%d logical partitions)\n", \
+          GetPartitionTypeName (PartBlockDev->PartitionType), \
+          PartBlockDev->BlockDeviceCount));
 
   if (EFI_ERROR (Status)) {
     FreePool (PartBlockDev);
